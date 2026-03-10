@@ -19,15 +19,24 @@ CONFIGURATION
   Omega range         : [-6.0, 6.0] eV,  512 points
   Physics constraints : Normalisation (λ=5.0), Smoothness (λ=0.5), KK (λ=1.0)
 
+  Regime thresholds   :
+    Metallic           U/W < 0.8
+    Correlated metal   0.8 ≤ U/W < 1.5   ← updated from 1.2
+    Mott insulating    U/W ≥ 1.5          ← now consistent with Brinkman-Rice
+                                             critical point (Z = 0 at U/W = 1.5)
+
 
 DATASET (Stratified Sampling — 30% near Mott transition, U/W ∈ [1.0, 1.6])
 ─────────────────────────────────────────────────────────────────────────────
   Metallic             : 2,421 samples  (30.3%)
-  Correlated metal     : 2,583 samples  (32.3%)
-  Mott insulating      : 2,996 samples  (37.5%)
+  Correlated metal     : 4,252 samples  (53.2%)
+  Mott insulating      : 1,327 samples  (16.6%)
 
-  Note: Previous uniform sampling gave 43% metallic / 26% correlated / 31% Mott.
-  Stratified sampling better represents the physically critical transition region.
+  Note: CORRELATED_THRESHOLD changed from 1.2 → 1.5, aligning the regime
+  boundary with the Brinkman-Rice formula used in generator.py (Z = 0 at
+  U/W = 1.5). Samples with U/W ∈ [1.2, 1.5) previously labelled as
+  "mott_insulating" (despite Z > 0) are now correctly classified as
+  "correlated metal". Mott insulating now contains only truly gapped spectra.
 
 
 MODEL SIZES
@@ -77,7 +86,7 @@ TRAINING LOG — MLP
   Epoch  290/300 | Train:   0.487 | Val: 0.497 | Recon: 0.368 | KK: 0.07106 (scale=1.00)
   Epoch  300/300 | Train:   0.487 | Val: 0.495 | Recon: 0.366 | KK: 0.07349 (scale=1.00)
 
-  Stopped at    : Epoch 300 (reached max epochs)
+  Stopped at     : Epoch 300 (reached max epochs — no early stopping triggered)
   Best checkpoint: Epoch 300
   Best val recon : 0.366236
 
@@ -117,8 +126,8 @@ TEST SET RESULTS
 
   Per-regime MSE / R²:
     Metallic           : MSE=0.135920   R²=0.2602
-    Correlated         : MSE=0.022552   R²=0.4458  ← best R² for MLP
-    Mott insulating    : MSE=0.010308   R²=0.2207
+    Correlated         : MSE=0.016810   R²=0.4353  ← best R² for MLP
+    Mott insulating    : MSE=0.013240   R²=0.0211
 
   DeepONet
   ───────────────────────────────────────────────────
@@ -132,8 +141,8 @@ TEST SET RESULTS
 
   Per-regime MSE / R²:
     Metallic           : MSE=0.137415   R²=0.2520
-    Correlated         : MSE=0.023469   R²=0.4233
-    Mott insulating    : MSE=0.008538   R²=0.3545  ← best Mott R²
+    Correlated         : MSE=0.017173   R²=0.4232
+    Mott insulating    : MSE=0.009848   R²=0.2719  ← best Mott R²
 
 
 SIDE-BY-SIDE COMPARISON  (* = best)
@@ -149,48 +158,66 @@ SIDE-BY-SIDE COMPARISON  (* = best)
 
   Per-regime MSE:
     Metallic         0.135920 *     0.137415
-    Correlated       0.022552 *     0.023469
-    Mott insulating  0.010308       0.008538 *
+    Correlated       0.016810 *     0.017173
+    Mott insulating  0.013240       0.009848 *
 
   Per-regime R²:
     Metallic         0.2602 *       0.2520
-    Correlated       0.4458 *       0.4233
-    Mott insulating  0.2207         0.3545 *
+    Correlated       0.4353 *       0.4232
+    Mott insulating  0.0211         0.2719 *
 
 
 KEY OBSERVATIONS
 ─────────────────────────────────────────────────────────────────────────────
-  1. Overall performance is near-identical (MSE ~0.052, R² ~0.29 for both).
-     The bottleneck is the data and physics, not the architecture.
+  1. Overall MSE is near-identical for both models (~0.052), confirming the
+     performance bottleneck is the data and physics, not the architecture.
 
   2. MLP wins on metallic and correlated regimes.
      Its residual-block structure excels at parameter→function mappings for
-     broader spectral features with moderate correlation.
+     broader spectral features. Correlated R²=0.435 is the highest single-
+     regime score across both models.
 
-  3. DeepONet wins on Mott insulating (R²=0.354 vs 0.221).
+  3. DeepONet wins decisively on Mott insulating (R²=0.272 vs 0.021).
      The operator learning framework better captures the sharp gap opening
-     and Hubbard band separation at strong correlation (U/W > 1.2).
+     and Hubbard band separation at strong correlation (U/W > 1.5).
+     The MLP's near-zero Mott R² (0.021) reflects its difficulty predicting
+     the full diversity of truly gapped spectra.
 
   4. DeepONet has lower QP peak height MAE (1.752 vs 1.815), meaning it
-     better recovers the quasiparticle peak amplitude near ω=0 — the
-     physically most important feature for correlated metals.
+     more accurately recovers quasiparticle peak amplitude near ω=0.
 
   5. All physics constraints are perfectly satisfied by both models:
      - Normalisation error = 0.000 (sum rule ∫A(ω)dω = 1 enforced exactly)
      - Negative fraction   = 0.000 (positivity enforced by softplus layer)
 
-  6. KK loss rises steadily after epoch 50 (warmup complete) as models
-     learn sharper spectral features. This is expected behaviour, not a
-     training failure — it reflects increasing structural complexity in
-     the predictions, not causality violation.
+  6. Impact of CORRELATED_THRESHOLD change (1.2 → 1.5):
+     - Correlated metal now contains 4,252 samples (was 2,583); Mott
+       insulating reduced to 1,327 (was 2,996). Samples with U/W ∈ [1.2, 1.5)
+       and Z > 0 are now correctly in the correlated regime.
+     - Correlated MSE improves (0.0168/0.0172 vs 0.0226/0.0235 previously)
+       because the regime no longer contains misclassified near-Mott samples.
+     - Mott insulating now consists purely of gapped spectra (U/W ≥ 1.5),
+       making it a harder, more physically meaningful benchmark. MLP Mott
+       R² drops to ~0, revealing it cannot capture genuine gap formation.
+     - DeepONet Mott R²=0.272 confirms its operator learning architecture
+       retains meaningful predictive power even for the hardest regime.
 
-  7. MLP trained for all 300 epochs (no early stopping); DeepONet stopped
-     at epoch 115. The MLP continued to reduce reconstruction loss
-     monotonically through epoch 300, benefiting from the full budget.
+  7. KK loss rises steadily after epoch 50 (warmup complete). This is
+     expected — as models learn sharper spectral features, the FFT and PV
+     integral estimates of Re[G] diverge more. It reflects increasing
+     structural complexity, not causality violation.
+
+  8. MLP trained all 300 epochs; DeepONet early stopped at epoch 115.
+     MLP reconstruction loss improved monotonically through epoch 300,
+     benefiting from the full training budget.
 
 
 IMPROVEMENTS MADE VS ORIGINAL CODEBASE
 ─────────────────────────────────────────────────────────────────────────────
+  Physics fix:
+    - CORRELATED_THRESHOLD: 1.2 → 1.5, consistent with the Brinkman-Rice
+      critical point (Z = 0 at U/W = 1.5) used in generator.py
+
   Code quality:
     - Moved stray `from typing import Dict` import to top of constraints.py
     - Added weights_only=False to all torch.load() calls (PyTorch warning fix)
